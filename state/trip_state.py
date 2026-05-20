@@ -3,12 +3,12 @@ import operator
 
 
 class TripState(TypedDict):
-    # ── Input ────────────────────────────────────────────────
+    # -- Input ---------------------------------------------------
     user_query: str                          # Raw user request
     user_profile: Dict[str, Any]            # Name, email, past trips
-    trip_preferences: Dict[str, Any]        # Source, dest, dates, budget, pax…
+    trip_preferences: Dict[str, Any]        # Source, dest, dates, budget, pax
 
-    # ── Agent outputs ────────────────────────────────────────
+    # -- Agent outputs -------------------------------------------
     weather_data: Dict[str, Any]
     transport_data: Dict[str, Any]
     hotel_data: Dict[str, Any]
@@ -19,10 +19,11 @@ class TripState(TypedDict):
     pdf_status: Dict[str, Any]              # {generated, path, error}
     memory_context: Dict[str, Any]          # Past preferences retrieved
 
-    # ── Orchestrator control ─────────────────────────────────
+    # -- Orchestrator control ------------------------------------
     orchestrator_decision: Dict[str, Any]   # {next_agent, reason, retry_agents}
     retry_count: int
     error_log: Annotated[List[str], operator.add]
     messages: Annotated[List[Dict[str, Any]], operator.add]
+    guardrail_log: Annotated[List[str], operator.add]  # security & quality check log
     final_output: Optional[str]
-    status: str                             # running | approved | failed | done
+    status: str                             # running | approved | failed | blocked | done

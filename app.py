@@ -36,6 +36,11 @@ st.markdown("""
     padding: 10px 15px; margin: 5px 0; border-radius: 4px;
     font-size: 0.9em; font-weight: bold;
 }
+.guardrail-card {
+    background: #f0f4ff; border-left: 4px solid #3b5bdb;
+    padding: 10px 15px; margin: 5px 0; border-radius: 4px;
+    font-size: 0.85em; color: #364fc7;
+}
 .success-box {
     background: #e8f5e9; border: 2px solid #1A6B3C;
     padding: 15px; border-radius: 8px; text-align: center;
@@ -193,10 +198,17 @@ def main():
                     for msg in msgs:
                         content = msg.get("content", "")
                         role = msg.get("role", "system")
-                        css_class = "orch-card" if role == "orchestrator" else "agent-card"
-                        icon = "ORCH" if role == "orchestrator" else node_name.replace("_", " ").title()
+                        if role == "orchestrator":
+                            css_class = "orch-card"
+                            icon = "ORCH"
+                        elif role == "guardrail":
+                            css_class = "guardrail-card"
+                            icon = "GUARD"
+                        else:
+                            css_class = "agent-card"
+                            icon = node_name.replace("_", " ").title()
                         st.markdown(
-                            f'<div class="{css_class}"><b>{icon}</b>: {content}</div>',
+                            f'<div class="{css_class}"><b>[{icon}]</b> {content}</div>',
                             unsafe_allow_html=True
                         )
 

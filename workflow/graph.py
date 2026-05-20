@@ -28,6 +28,7 @@ from agents.budget_agent import budget_agent
 from agents.itinerary_agent import itinerary_agent
 from agents.review_agent import review_agent
 from agents.pdf_generator_agent import pdf_generator_agent
+from guardrails.guardrail_nodes import input_guardrail_node, output_guardrail_node
 
 
 def _route_after_validate(state: TripState) -> str:
@@ -73,6 +74,7 @@ def build_graph() -> StateGraph:
     # ── Add all agent nodes ──────────────────────────────────
     graph.add_node("orchestrator_agent", orchestrator_agent)
     graph.add_node("user_input_agent", user_input_agent)
+    graph.add_node("input_guardrail", input_guardrail_node)        # security layer 1
     graph.add_node("memory_retrieval_agent", memory_retrieval_agent)
     graph.add_node("weather_agent", weather_agent)
     graph.add_node("transport_agent", transport_agent)
@@ -81,6 +83,7 @@ def build_graph() -> StateGraph:
     graph.add_node("budget_agent", budget_agent)
     graph.add_node("itinerary_agent", itinerary_agent)
     graph.add_node("review_agent", review_agent)
+    graph.add_node("output_guardrail", output_guardrail_node)      # security layer 2
     graph.add_node("orchestrator_validate", orchestrator_validate)
     graph.add_node("memory_update_agent", memory_update_agent)
     graph.add_node("pdf_generator_agent", pdf_generator_agent)
@@ -91,7 +94,8 @@ def build_graph() -> StateGraph:
 
     # ── Main sequential flow ─────────────────────────────────
     graph.add_edge("orchestrator_agent", "user_input_agent")
-    graph.add_edge("user_input_agent", "memory_retrieval_agent")
+    graph.add_edge("user_input_agent", "input_guardrail")          # validate & sanitize input
+    graph.add_edge("input_guardrail", "memory_retrieval_agent")
 
     # Simulated parallel execution — runs sequentially but independently
     graph.add_edge("memory_retrieval_agent", "weather_agent")
@@ -103,7 +107,8 @@ def build_graph() -> StateGraph:
     graph.add_edge("places_agent", "budget_agent")
     graph.add_edge("budget_agent", "itinerary_agent")
     graph.add_edge("itinerary_agent", "review_agent")
-    graph.add_edge("review_agent", "orchestrator_validate")
+    graph.add_edge("review_agent", "output_guardrail")             # validate cross-agent outputs
+    graph.add_edge("output_guardrail", "orchestrator_validate")
 
     # ── Conditional edges after validation ──────────────────
     graph.add_conditional_edges(
