@@ -10,6 +10,7 @@ An AI-powered travel planning system built with **LangGraph** and **LangChain** 
 - [Features](#features)
 - [Architecture](#architecture)
 - [Agent Descriptions](#agent-descriptions)
+- [Guardrails](#guardrails)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
@@ -41,6 +42,7 @@ The system supports both a **command-line interface** (`main.py`) and a **Stream
 - PDF trip report generation
 - Persistent memory via ChromaDB (stores past trips and user preferences)
 - Streamlit web UI with tabbed results view
+- **Multi-layer guardrail system** — input validation, output sanity checks, and cross-agent consistency enforcement
 
 ---
 
@@ -60,6 +62,11 @@ User Query
 ┌─────────────────┐
 │  User Input     │  ← Parses query into structured preferences
 └────────┬────────┘
+         │
+         ▼
+┌══════════════════╗
+║ Input Guardrail  ║  ← Security layer 1: injection check, PII scan, preference validation
+╚════════╤═════════╝
          │
          ▼
 ┌─────────────────┐
@@ -90,6 +97,10 @@ User Query
             ┌─────────────────┐
             │     Review      │  ← Quality check + budget validation
             └────────┬────────┘
+                     │
+            ╔════════╧═════════╗
+            ║ Output Guardrail ║  ← Security layer 2: consistency, budget sanity, itinerary completeness
+            ╚════════╤═════════╝
                      │
            ┌─────────┴──────────┐
            │  Orchestrator      │
@@ -127,6 +138,73 @@ User Query
 | **Review** | Quality control agent that scores completeness, flags conflicts, and recommends retries |
 | **Memory Update** | Saves the completed trip plan and preferences back to ChromaDB for future personalization |
 | **PDF Generator** | Renders the approved trip plan into a formatted, downloadable PDF report |
+
+---
+
+## Guardrails
+
+The system includes a **multi-layer guardrail framework** (`guardrails/`) that protects the pipeline at both ends of the workflow and enforces cross-agent consistency.
+
+### Layer 1 — Input Guardrail (`input_guardrail_node`)
+
+Inserted **after `user_input_agent`**, before memory retrieval. Runs every time a new user query enters the system.
+
+| Check | Details |
+|---|---|
+| **Prompt injection detection** | Regex-based scan for 14+ attack patterns: role overrides, jailbreak keywords (`DAN mode`, `god mode`), SQL injection, path traversal, script/template injection, hex-encoding evasion |
+| **PII detection** | Advisory scan for credit/debit card numbers, Aadhaar, PAN, SSN, email addresses, and exposed credentials — logged as warnings |
+| **Query sanitization** | Strips HTML tags, `javascript:` schemes, `{{ }}` / `${ }` template expressions, and hex escapes; normalises whitespace; truncates to 1000 characters |
+| **Trip preference validation** | Checks that `destination`, `budget`, `num_days`, and `num_travelers` are present and within sane bounds (budget: ₹500 – ₹5 cr; days: 1 – 365; travelers: 1 – 500) |
+| **Auto-fix** | Zero or missing `budget` → ₹30,000; zero/missing `num_days` → 5; zero/missing `num_travelers` → 1 |
+| **Hard block** | If an injection attack is detected, `state.status` is set to `"blocked"` and the workflow halts |
+
+### Layer 2 — Output Guardrail (`output_guardrail_node`)
+
+Inserted **after `review_agent`**, before the orchestrator validation gate. Runs on the fully assembled plan.
+
+| Check | Details |
+|---|---|
+| **State field integrity** | Verifies that `messages`, `error_log`, and `guardrail_log` are lists; `retry_count` is a non-negative int; `status` is a known value |
+| **Cross-agent consistency** | Hotel location must match the requested destination; flight arrival city must match destination; `budget_summary.total_budget` must be within 10% of `trip_preferences.budget`; itinerary day count must match `num_days` (±1) |
+| **Budget sanity** | Checks `total_budget` and `total_estimated` against absolute INR bounds; flags if estimated cost exceeds budget by more than 10× (likely a calculation error) |
+| **Itinerary completeness** | Every day entry must be a dict with at least one of `activities`, `morning`, `afternoon`, or `evening` populated |
+| **Review schema** | Confirms `review_agent` output contains `approved` and `quality_score` fields |
+| **Retry loop detection** | Flags if `retry_count` exceeds 5, indicating a potential infinite retry loop |
+
+### Layer 3 — Agent Prerequisites (`validate_state_before_agent`)
+
+Defined in `agent_guard.py` and callable from any agent before it starts processing. Each agent has a declared list of required state fields; a missing field triggers an early error rather than a silent downstream failure.
+
+| Agent | Required state fields |
+|---|---|
+| `memory_retrieval_agent` | `user_query`, `trip_preferences` |
+| `weather_agent` / `transport_agent` / `hotel_agent` / `places_agent` | `trip_preferences` |
+| `budget_agent` | `trip_preferences`, `transport_data`, `hotel_data` |
+| `itinerary_agent` | `trip_preferences`, `weather_data`, `transport_data`, `hotel_data`, `places_data`, `budget_summary` |
+| `review_agent` | `trip_preferences`, `itinerary`, `budget_summary` |
+| `orchestrator_validate` | `review_status` |
+| `memory_update_agent` / `pdf_generator_agent` | `trip_preferences` |
+
+### PII Scrubbing (`scrub_pii`)
+
+Available in `output_guard.py` for use before any generated text is written to the PDF or displayed in the UI. Redacts card numbers, Aadhaar, PAN, SSN, email addresses, and credential strings with safe `[REDACTED]` tokens.
+
+### Guardrail Log
+
+All guardrail events are appended to `state.guardrail_log` (a cumulative list) so every flag is visible in the Streamlit UI and in the console output. The Streamlit app renders guardrail messages in a dedicated styled card.
+
+### Guardrail Module Structure
+
+```
+guardrails/
+├── __init__.py            # Public API re-exports
+├── input_guard.py         # validate_user_query, sanitize_text, validate_trip_preferences
+├── output_guard.py        # validate_agent_output, validate_budget_output,
+│                          # validate_itinerary_output, check_price_sanity, scrub_pii
+├── agent_guard.py         # validate_state_before_agent, check_inter_agent_consistency,
+│                          # check_state_field_integrity
+└── guardrail_nodes.py     # LangGraph node functions: input_guardrail_node, output_guardrail_node
+```
 
 ---
 
@@ -175,6 +253,13 @@ MultiAgentTripPlanner/
 │   ├── places_tool.py
 │   ├── budget_tool.py
 │   └── pdf_tool.py
+│
+├── guardrails/                # Multi-layer safety & validation framework
+│   ├── __init__.py
+│   ├── input_guard.py         # Prompt injection, PII detection, query sanitization
+│   ├── output_guard.py        # Schema validation, price sanity, PII scrubbing
+│   ├── agent_guard.py         # Prerequisite checks, cross-agent consistency
+│   └── guardrail_nodes.py     # LangGraph nodes: input_guardrail_node, output_guardrail_node
 │
 ├── workflow/
 │   └── graph.py               # LangGraph state graph definition
