@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from workflow.graph import build_graph
-from config.settings import ANTHROPIC_API_KEY
+from config.settings import OPENAI_API_KEY
 
 SAMPLE_QUERY = (
     "Plan a 5-day Goa trip from Bangalore for a couple. "
@@ -26,8 +26,8 @@ BANNER = """
 
 def run_trip_planner(user_query: str, user_id: str = "user_001") -> dict:
     """Execute the full multi-agent trip planning workflow."""
-    if not ANTHROPIC_API_KEY:
-        print("ERROR: Set ANTHROPIC_API_KEY in your .env file.")
+    if not OPENAI_API_KEY:
+        print("ERROR: Set OPENAI_API_KEY in your .env file.")
         sys.exit(1)
 
     print(BANNER)
@@ -53,6 +53,7 @@ def run_trip_planner(user_query: str, user_id: str = "user_001") -> dict:
         "retry_count": 0,
         "error_log": [],
         "messages": [],
+        "guardrail_log": [],
         "final_output": None,
         "status": "running",
     }
