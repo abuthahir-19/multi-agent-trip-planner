@@ -14,6 +14,19 @@ REDIS_URL = os.getenv("REDIS_URL", "")
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "output")
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
+# ── LangSmith observability ───────────────────────────────────────
+LANGCHAIN_API_KEY      = os.getenv("LANGCHAIN_API_KEY", "")
+LANGCHAIN_TRACING_V2   = os.getenv("LANGCHAIN_TRACING_V2", "false")
+LANGCHAIN_PROJECT      = os.getenv("LANGCHAIN_PROJECT", "multi-agent-trip-planner")
+LANGCHAIN_ENDPOINT     = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
+
+# Propagate to os.environ so LangChain's internal tracer picks them up
+if LANGCHAIN_API_KEY:
+    os.environ.setdefault("LANGCHAIN_API_KEY",    LANGCHAIN_API_KEY)
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", LANGCHAIN_TRACING_V2)
+    os.environ.setdefault("LANGCHAIN_PROJECT",    LANGCHAIN_PROJECT)
+    os.environ.setdefault("LANGCHAIN_ENDPOINT",   LANGCHAIN_ENDPOINT)
+
 LLM_MODEL = "gpt-4o-mini"
 LLM_TEMPERATURE = 0.3
 MAX_RETRY_ATTEMPTS = 3

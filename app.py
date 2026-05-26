@@ -62,6 +62,11 @@ st.markdown("""
     background: white; border: 1px solid #e0e0e0;
     padding: 15px; border-radius: 8px; text-align: center;
 }
+.langsmith-card {
+    background: #f3f0ff; border-left: 4px solid #7950f2;
+    padding: 10px 15px; margin: 5px 0; border-radius: 4px;
+    font-size: 0.85em; color: #5f3dc4;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -103,6 +108,18 @@ def main():
                                            value="mid-range")
         special_req    = st.text_area("Special Requirements", placeholder="Any special needs...")
         user_id        = st.text_input("User ID (for memory)", value="user_001")
+
+        st.markdown("---")
+        # LangSmith tracing status
+        from monitoring.langsmith_setup import is_tracing_enabled, get_project_url
+        if is_tracing_enabled():
+            st.markdown(
+                f'<div class="langsmith-card">🔭 <b>LangSmith tracing ON</b><br>'
+                f'<a href="{get_project_url()}" target="_blank">Open project dashboard →</a></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("LangSmith tracing off — add LANGCHAIN_API_KEY to .env to enable.")
 
         st.markdown("---")
         _server_key = os.environ.get("OPENAI_API_KEY", "")
@@ -204,44 +221,50 @@ def main():
 
     try:
         from workflow.graph import build_graph
+        from monitoring.langsmith_setup import get_run_config, capture_run_id
         graph = build_graph()
 
+        _prefs_dest = initial_state.get("trip_preferences", {}).get("destination", destination)
+        run_config  = get_run_config(user_id, destination, user_query)
+        run_meta    = {}
+
         with agent_log:
-            for step in graph.stream(initial_state, stream_mode="updates"):
-                for node_name, updates in step.items():
-                    step_counter[0] += 1
-                    pct = min(int(step_counter[0] / total_steps * 100), 95)
-                    progress.progress(pct, text=f"Running: {node_name}...")
+            with capture_run_id() as run_meta:
+                for step in graph.stream(initial_state, config=run_config, stream_mode="updates"):
+                    for node_name, updates in step.items():
+                        step_counter[0] += 1
+                        pct = min(int(step_counter[0] / total_steps * 100), 95)
+                        progress.progress(pct, text=f"Running: {node_name}...")
 
-                    msgs = updates.get("messages", [])
-                    for msg in msgs:
-                        content = msg.get("content", "")
-                        role    = msg.get("role", "system")
-                        if role == "orchestrator":
-                            css, icon = "orch-card",      "ORCH"
-                        elif role == "guardrail":
-                            css, icon = "guardrail-card", "GUARD"
-                        else:
-                            css  = "agent-card"
-                            icon = node_name.replace("_", " ").title()
-                        st.markdown(
-                            f'<div class="{css}"><b>[{icon}]</b> {content}</div>',
-                            unsafe_allow_html=True
-                        )
+                        msgs = updates.get("messages", [])
+                        for msg in msgs:
+                            content = msg.get("content", "")
+                            role    = msg.get("role", "system")
+                            if role == "orchestrator":
+                                css, icon = "orch-card",      "ORCH"
+                            elif role == "guardrail":
+                                css, icon = "guardrail-card", "GUARD"
+                            else:
+                                css  = "agent-card"
+                                icon = node_name.replace("_", " ").title()
+                            st.markdown(
+                                f'<div class="{css}"><b>[{icon}]</b> {content}</div>',
+                                unsafe_allow_html=True
+                            )
 
-                    for k, v in updates.items():
-                        if isinstance(v, list) and isinstance(final_state.get(k), list):
-                            final_state[k] = final_state.get(k, []) + v
-                        else:
-                            final_state[k] = v
+                        for k, v in updates.items():
+                            if isinstance(v, list) and isinstance(final_state.get(k), list):
+                                final_state[k] = final_state.get(k, []) + v
+                            else:
+                                final_state[k] = v
 
-                    # Stop immediately if input was blocked by guardrail
+                        # Stop immediately if input was blocked by guardrail
+                        if final_state.get("status") == "blocked":
+                            progress.progress(100, text="Blocked by security guardrail.")
+                            break
+
                     if final_state.get("status") == "blocked":
-                        progress.progress(100, text="Blocked by security guardrail.")
                         break
-
-                if final_state.get("status") == "blocked":
-                    break
 
         progress.progress(100, text="Complete!")
 
@@ -265,18 +288,28 @@ def main():
         return
 
     # ── Auto-run RAG evaluation ───────────────────────────────────
-    eval_results = None
+    eval_results   = None
+    langsmith_run_id = run_meta.get("run_id")
+    feedback_status  = None
+
     try:
         from evaluation.rag_evaluator import TripPlannerRAGEvaluator
-        evaluator = TripPlannerRAGEvaluator()
+        evaluator    = TripPlannerRAGEvaluator()
         eval_results = evaluator.evaluate_heuristic(final_state)
         evaluator.save_report([eval_results])
     except Exception as e:
         eval_results = {"error": str(e)}
 
+    # Submit RAG scores as LangSmith feedback
+    if eval_results and "error" not in eval_results and langsmith_run_id:
+        from monitoring.langsmith_setup import submit_feedback
+        feedback_status = submit_feedback(langsmith_run_id, eval_results)
+
     # ── Display results ───────────────────────────────────────────
     st.markdown("---")
-    _display_results(final_state, initial_state, eval_results)
+    _display_results(final_state, initial_state, eval_results,
+                     langsmith_run_id=langsmith_run_id,
+                     feedback_status=feedback_status)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -296,6 +329,7 @@ def _show_welcome():
         - **PDF Report Generation**
         - **Guardrails** (4 layers)
         - **RAG Evaluation** (auto)
+        - **LangSmith Observability**
         """)
     with col2:
         st.markdown("""
@@ -331,7 +365,8 @@ def _show_welcome():
 # Results display
 # ─────────────────────────────────────────────────────────────────
 
-def _display_results(state: dict, init_state: dict, eval_results: dict):
+def _display_results(state: dict, init_state: dict, eval_results: dict,
+                     langsmith_run_id: str = None, feedback_status: str = None):
     prefs     = state.get("trip_preferences", {}) or init_state.get("trip_preferences", {})
     budget    = state.get("budget_summary", {})
     itinerary = state.get("itinerary", {})
@@ -476,7 +511,9 @@ def _display_results(state: dict, init_state: dict, eval_results: dict):
 
     # ── Tab 6: Evaluation ─────────────────────────────────────────
     with tab6:
-        _render_evaluation_tab(state, eval_results)
+        _render_evaluation_tab(state, eval_results,
+                               langsmith_run_id=langsmith_run_id,
+                               feedback_status=feedback_status)
 
     # Errors
     errors = state.get("error_log", [])
@@ -486,9 +523,30 @@ def _display_results(state: dict, init_state: dict, eval_results: dict):
                 st.warning(e)
 
 
-def _render_evaluation_tab(state: dict, eval_results: dict):
+def _render_evaluation_tab(state: dict, eval_results: dict,
+                            langsmith_run_id: str = None,
+                            feedback_status: str = None):
     st.markdown("## Security & Quality Evaluation")
     st.caption("Runs automatically after every workflow execution.")
+
+    # ── LangSmith trace panel ─────────────────────────────────────
+    from monitoring.langsmith_setup import is_tracing_enabled, get_trace_url, get_project_url
+    if is_tracing_enabled():
+        trace_url = get_trace_url(langsmith_run_id) if langsmith_run_id else None
+        if trace_url:
+            st.markdown(
+                f'<div class="langsmith-card">🔭 <b>LangSmith Trace</b> — '
+                f'<a href="{trace_url}" target="_blank">Open full trace →</a>'
+                f'{"  |  " + feedback_status if feedback_status else ""}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div class="langsmith-card">🔭 <b>LangSmith</b> — tracing enabled. '
+                f'<a href="{get_project_url()}" target="_blank">View project →</a></div>',
+                unsafe_allow_html=True,
+            )
+    st.markdown("")
 
     # ── Guardrail Results ─────────────────────────────────────────
     st.markdown("### Guardrail Log")
