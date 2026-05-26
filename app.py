@@ -105,9 +105,20 @@ def main():
         user_id        = st.text_input("User ID (for memory)", value="user_001")
 
         st.markdown("---")
-        openai_key = st.text_input("OpenAI API Key", type="password",
-                                    value=os.getenv("OPENAI_API_KEY", ""),
-                                    help="Get from platform.openai.com")
+        _server_key = os.environ.get("OPENAI_API_KEY", "")
+        if _server_key:
+            st.success("Server API key is configured.", icon="🔑")
+        openai_key = st.text_input(
+            "OpenAI API Key" + (" (optional override)" if _server_key else " (required)"),
+            type="password",
+            value="",
+            placeholder="sk-proj-... paste to use your own key",
+            help=(
+                "Leave blank to use the server-configured key."
+                if _server_key else
+                "Required — get yours at platform.openai.com"
+            ),
+        )
 
     # ── Main area — query prompt ──────────────────────────────────
     st.markdown("### Describe your trip")
@@ -139,18 +150,17 @@ def main():
         return
 
     # ── Validation ────────────────────────────────────────────────
-    if not openai_key:
-        st.error("Please enter your OpenAI API Key in the sidebar.")
-        return
-
     if not user_query.strip():
         st.error("Please describe your trip in the query box above.")
         return
 
-    os.environ["OPENAI_API_KEY"] = openai_key
-    import importlib
-    import config.settings as _cfg
-    importlib.reload(_cfg)
+    # Key priority: frontend input > server env var (.env / Render)
+    effective_key = openai_key.strip() or os.environ.get("OPENAI_API_KEY", "")
+    if not effective_key:
+        st.error("No OpenAI API Key found. Paste your key in the sidebar.")
+        return
+
+    os.environ["OPENAI_API_KEY"] = effective_key   # get_llm() reads this at call time
 
     # ── Build initial state ───────────────────────────────────────
     initial_state = {

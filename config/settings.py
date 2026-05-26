@@ -20,8 +20,17 @@ MAX_RETRY_ATTEMPTS = 3
 
 
 def get_llm(temperature: float = LLM_TEMPERATURE):
-    """Return a ChatOpenAI instance."""
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set. Add it to your .env file.")
+    """Return a ChatOpenAI instance.
+
+    Reads OPENAI_API_KEY from os.environ at call time so that a key
+    entered in the frontend (which sets os.environ) always takes
+    priority over the value loaded from .env at startup.
+    """
+    key = os.environ.get("OPENAI_API_KEY", "")
+    if not key:
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. "
+            "Add it to your .env file or paste it in the app sidebar."
+        )
     from langchain_openai import ChatOpenAI
-    return ChatOpenAI(model=LLM_MODEL, api_key=OPENAI_API_KEY, temperature=temperature)
+    return ChatOpenAI(model=LLM_MODEL, api_key=key, temperature=temperature)
