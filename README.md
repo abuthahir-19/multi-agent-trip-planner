@@ -48,7 +48,7 @@ The system supports both a **command-line interface** (`main.py`) and a **Stream
 
 ## Architecture
 
-![Architecture Diagram](trip_planner_arch.svg)
+![Architecture Diagram](./Trip-Planner-Arch.png)
 
 The system is built on a **LangGraph state graph** where a central **Orchestrator** supervises a pipeline of specialised agents that all share a single `TripState` TypedDict. A user query first passes through an **Input Guardrail** (injection detection, PII scan, preference validation) before hitting **Memory Retrieval**, which personalises the plan using past trips stored in ChromaDB. Four research agents — Weather, Transport, Hotel, and Places — then run **in parallel**, feeding their results into the sequential **Budget** and **Itinerary** agents. A **Review** agent scores the assembled plan, after which an **Output Guardrail** verifies cross-agent consistency and budget sanity before the Orchestrator makes its final call: **APPROVED** (→ Memory Update → PDF report) or **RETRY** (failed agents are individually re-run). The two orange guardrail nodes, together with a third prerequisite-check layer in `agent_guard.py`, form a multi-layer safety framework that protects the pipeline at every critical edge.
 
